@@ -3,6 +3,7 @@ package controller
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -124,9 +125,9 @@ func UpdatePortfolio(c *gin.Context) {
 	title := c.PostForm("title")
 	url := c.PostForm("url")
 
-	// Ambil data lama untuk dapatkan icon lama
+	// Ambil data lama untuk dapatkan image lama
 	var oldImage string
-	err = config.DB.QueryRow("SELECT image FROM portfolios WHERE id = $1", sql.Named("p1", id)).Scan(&oldImage)
+	err = config.DB.QueryRow("SELECT image FROM portfolios WHERE id = $1", id).Scan(&oldImage)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Portfolio not found"})
 		return
@@ -135,38 +136,38 @@ func UpdatePortfolio(c *gin.Context) {
 		return
 	}
 
-	imagePath := oldImage // default: gunakan image lama
+	newImagePath := oldImage // default: gunakan image lama
 
+	// Upload file baru jika ada
 	file, err := c.FormFile("image")
 	if err == nil {
-		// Jika ada file baru, upload dan ganti
 		os.MkdirAll("uploads", os.ModePerm)
 		filename := uuid.New().String() + filepath.Ext(file.Filename)
-		savePath := "uploads/" + filename
+		savePath := filepath.Join("uploads", filename)
 		if err := c.SaveUploadedFile(file, savePath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload image"})
 			return
 		}
-		imagePath = "/uploads/" + filename
-	}
+		newImagePath = "/uploads/" + filename
 
-	// hapus file lama jika ada
-	if oldImage != "" {
-		_, imageFile := filepath.Split(oldImage)
-		imagePath := filepath.Join("uploads", imageFile)
-		if _, err := os.Stat(imagePath); err == nil {
-			if err := os.Remove(imagePath); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete image", "detail": err.Error()})
-				return
+		// hapus file lama
+		if oldImage != "" {
+			_, oldFileName := filepath.Split(oldImage)
+			oldFilePath := filepath.Join("uploads", oldFileName)
+			if _, err := os.Stat(oldFilePath); err == nil {
+				if err := os.Remove(oldFilePath); err != nil {
+					log.Printf("Failed to delete old image: %s", err)
+				}
 			}
 		}
 	}
 
+	// Update data di PostgreSQL
 	_, err = config.DB.Exec(`
 		UPDATE portfolios
 		SET title = $1, url = $2, image = $3, updated_at = $4
 		WHERE id = $5
-	`, title, url, imagePath, time.Now(), id)
+	`, title, url, newImagePath, time.Now(), id)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update data", "detail": err.Error()})
