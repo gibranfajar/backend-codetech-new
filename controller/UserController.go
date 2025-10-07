@@ -152,7 +152,6 @@ func UpdateUser(c *gin.Context) {
 	}
 
 	var req model.UserRequestUpdate
-
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -173,33 +172,42 @@ func UpdateUser(c *gin.Context) {
 	password := c.PostForm("password")
 	role := c.PostForm("role")
 
-	var user model.User
-	err = config.DB.QueryRow("SELECT id FROM users WHERE id = $1", sql.Named("p1", id)).Scan(&user.Id)
-	if err == sql.ErrNoRows {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Data not found"})
+	// Cek apakah user ada
+	var exists bool
+	err = config.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", id).Scan(&exists)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
 
-	var userByEmail model.User
-	err = config.DB.QueryRow("SELECT id FROM users WHERE email = $1 AND id != $2", sql.Named("p1", email), sql.Named("p2", id)).Scan(&userByEmail.Id)
-	if err == nil {
+	// Cek email duplicate (kecuali milik user ini)
+	var emailExists bool
+	err = config.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1 AND id != $2)", email, id).Scan(&emailExists)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+	if emailExists {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Email already exists"})
 		return
 	}
 
-	// Ambil gambar lama dari database
+	// Ambil gambar lama
 	var oldImage string
-	err = config.DB.QueryRow("SELECT profile FROM users WHERE id = $1", sql.Named("p1", id)).Scan(&oldImage)
+	err = config.DB.QueryRow("SELECT profile FROM users WHERE id = $1", id).Scan(&oldImage)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get old profile"})
 		return
 	}
 
-	// Cek apakah ada file baru yang diupload
-	file, err := c.FormFile("profile")
+	// Upload file baru jika ada
 	var profilePath string
+	file, err := c.FormFile("profile")
 	if err == nil {
-		// Upload file baru
 		os.MkdirAll("uploads", os.ModePerm)
 		filename := uuid.New().String() + filepath.Ext(file.Filename)
 		savePath := "uploads/" + filename
@@ -215,21 +223,14 @@ func UpdateUser(c *gin.Context) {
 			os.Remove("uploads/" + oldFile)
 		}
 	} else {
-		// Gunakan gambar lama
 		profilePath = oldImage
 	}
 
-	// Bangun query dan parameter secara dinamis
+	// Siapkan query update
 	query := `
 	UPDATE users
-	SET name = @name, email = @email, profile = $rofile, role = @role, updated_at = @updated_at`
-	args := []interface{}{
-		sql.Named("name", name),
-		sql.Named("email", email),
-		sql.Named("profile", profilePath),
-		sql.Named("role", role),
-		sql.Named("updated_at", time.Now()),
-	}
+	SET name = $1, email = $2, profile = $3, role = $4, updated_at = $5`
+	args := []interface{}{name, email, profilePath, role, time.Now()}
 
 	if password != "" {
 		hashedPassword, err := utils.HashPassword(password)
@@ -237,12 +238,12 @@ func UpdateUser(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 			return
 		}
-		query += `, password = $assword`
-		args = append(args, sql.Named("password", hashedPassword))
+		query += `, password = $6 WHERE id = $7`
+		args = append(args, hashedPassword, id)
+	} else {
+		query += ` WHERE id = $6`
+		args = append(args, id)
 	}
-
-	query += ` WHERE id = @id`
-	args = append(args, sql.Named("id", id))
 
 	_, err = config.DB.Exec(query, args...)
 	if err != nil {
@@ -250,9 +251,7 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Data updated successfully",
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "Data updated successfully"})
 }
 
 // delete data
