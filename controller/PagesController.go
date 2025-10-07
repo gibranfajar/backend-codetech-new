@@ -200,8 +200,8 @@ func DeletePage(c *gin.Context) {
 	}
 
 	var page model.Pages
-	query := "SELECT id, banner FROM pages WHERE id = @id"
-	err = config.DB.QueryRow(query, sql.Named("id", id)).Scan(&page.Id, &page.Banner)
+	query := "SELECT id, banner FROM pages WHERE id = $1"
+	err = config.DB.QueryRow(query, id).Scan(&page.Id, &page.Banner)
 	if err == sql.ErrNoRows {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Page not found"})
 		return
@@ -210,8 +210,8 @@ func DeletePage(c *gin.Context) {
 		return
 	}
 
-	deleteQuery := "DELETE FROM pages WHERE id = @id"
-	result, err := config.DB.Exec(deleteQuery, sql.Named("id", id))
+	deleteQuery := "DELETE FROM pages WHERE id = $1"
+	result, err := config.DB.Exec(deleteQuery, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete page", "detail": err.Error()})
 		return
@@ -223,9 +223,9 @@ func DeletePage(c *gin.Context) {
 		return
 	}
 
+	// Hapus file banner
 	_, fileName := filepath.Split(page.Banner)
 	filePath := filepath.Join("uploads", fileName)
-
 	if _, err := os.Stat(filePath); err == nil {
 		if err := os.Remove(filePath); err != nil {
 			log.Printf("Failed to delete banner file: %s", err)
